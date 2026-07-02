@@ -1,10 +1,12 @@
 const CONFIG = window.EAT_APP_CONFIG || {};
 const AMAP_PROXY_PATH = CONFIG.AMAP_PROXY_PATH || "/api/amap";
 const SEARCH_RADIUS = 500;
-const MAX_RESULTS_PER_CATEGORY = 100;
+const MAX_RESULTS_PER_CATEGORY = 50;  // 从100减到50
 const SEARCH_PAGE_SIZE = 25;
-const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);
-const CONCURRENCY_LIMIT = 2;  // 同时最多2个请求，避免QPS限制
+const SEARCH_PAGES = 2;  // 从4减到2
+const CONCURRENCY_LIMIT = 2;
+const CACHE_TTL = 24 * 60 * 60 * 1000;  // 缓存24小时
+const CACHE_KEY = "eat_search_cache";
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -105,6 +107,7 @@ let suggestionTimer = null;
 let selectedLocation = null;
 let isApplyingAddress = false;
 let isPicking = false;
+let preloadTimer = null;
 
 function getActiveCategory() {
   return CATEGORIES.find((category) => category.id === activeCategoryId) || CATEGORIES[0];
@@ -134,6 +137,40 @@ function getHasAmapProxy() {
   return Boolean(AMAP_PROXY_PATH) && window.location.protocol !== "file:";
 }
 
+// ========== 缓存系统 ==========
+function getCacheKey(address) {
+  return `eat_${address.trim().toLowerCase()}`;
+}
+
+function getCachedResult(address) {
+  try {
+    const key = getCacheKey(address);
+    const cached = localStorage.getItem(key);
+    if (!cached) return null;
+    const data = JSON.parse(cached);
+    if (Date.now() - data.timestamp > CACHE_TTL) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return data.results;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedResult(address, results) {
+  try {
+    const key = getCacheKey(address);
+    localStorage.setItem(key, JSON.stringify({
+      timestamp: Date.now(),
+      results,
+    }));
+  } catch {
+    // 缓存失败不阻塞
+  }
+}
+
+// ========== API 请求 ==========
 async function requestAmap(action, params = {}) {
   const url = new URL(AMAP_PROXY_PATH, window.location.origin);
   url.searchParams.set("action", action);
@@ -167,7 +204,7 @@ async function reverseGeocode(center) {
   return result?.regeocode?.formatted_address || "当前位置";
 }
 
-// 带并发限制的并行执行器
+// ========== 并发控制 ==========
 async function runWithConcurrencyLimit(tasks, limit) {
   const results = [];
   const executing = [];
@@ -184,7 +221,7 @@ async function runWithConcurrencyLimit(tasks, limit) {
   return settled.sort((a, b) => a.index - b.index).map((item) => item.result);
 }
 
-// 优化：带并发限制的并行翻页
+// ========== 搜索逻辑 ==========
 async function searchCategory(center, category) {
   const tasks = [];
   for (let pageIndex = 1; pageIndex <= SEARCH_PAGES; pageIndex++) {
@@ -295,6 +332,7 @@ function formatType(type = "") {
   return parts[parts.length - 1] || "餐厅";
 }
 
+// ========== 渲染 ==========
 function renderActiveCategory() {
   const category = getActiveCategory();
   const list = resultsByCategory[category.id] || [];
@@ -468,6 +506,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// ========== 地址建议 ==========
 function hideSuggestions() {
   els.locationSuggestions.classList.add("hidden");
   els.locationSuggestions.replaceChildren();
@@ -523,6 +562,33 @@ function updateSuggestions() {
   }, 260);
 }
 
+// ========== 预加载 ==========
+function preloadSearch(address, center) {
+  clearTimeout(preloadTimer);
+  preloadTimer = setTimeout(async () => {
+    if (!address || !getHasAmapProxy()) return;
+    const cacheKey = getCacheKey(address);
+    if (localStorage.getItem(cacheKey)) return; // 已有缓存不预加载
+    try {
+      const resolvedCenter = center || (await geocodeAddress(address));
+      const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
+      const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
+      const [restaurants, desserts] = await Promise.all([
+        searchCategory(resolvedCenter, restaurantCategory),
+        searchCategory(resolvedCenter, dessertCategory),
+      ]);
+      const dessertFallback = getDessertFallback(restaurants);
+      setCachedResult(address, {
+        restaurants,
+        dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
+      });
+    } catch {
+      // 预加载失败静默处理
+    }
+  }, 2000); // 输入停止2秒后预加载
+}
+
+// ========== 定位 ==========
 function getBrowserPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) { reject(new Error("当前浏览器不支持自动定位")); return; }
@@ -571,6 +637,7 @@ async function handleSearch() {
   });
 }
 
+// ========== 主搜索逻辑 ==========
 async function runSearch({ address, center = null }) {
   els.pickedPanel.classList.add("hidden");
   hideSuggestions();
@@ -578,6 +645,16 @@ async function runSearch({ address, center = null }) {
   if (!address) {
     setState("先输入一个地址吧", "也可以点一下输入框，自动获取你当前的位置。");
     els.addressInput.focus();
+    return;
+  }
+
+  // 检查缓存
+  const cached = getCachedResult(address);
+  if (cached) {
+    resultsByCategory = cached;
+    isShowingDemo = false;
+    renderActiveCategory();
+    els.searchHint.textContent = `已搜索「${address}」方圆 ${SEARCH_RADIUS} 米内的餐厅和甜品下午茶。（来自缓存）`;
     return;
   }
 
@@ -600,7 +677,6 @@ async function runSearch({ address, center = null }) {
     const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
     const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
 
-    // 并行搜索餐厅和甜点（每个内部有并发限制）
     const [restaurants, desserts] = await Promise.all([
       searchCategory(resolvedCenter, restaurantCategory),
       searchCategory(resolvedCenter, dessertCategory),
@@ -612,6 +688,9 @@ async function runSearch({ address, center = null }) {
       restaurants,
       dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
     };
+
+    // 写入缓存
+    setCachedResult(address, resultsByCategory);
 
     isShowingDemo = false;
     renderActiveCategory();
@@ -636,6 +715,7 @@ function switchCategory(categoryId) {
   renderActiveCategory();
 }
 
+// ========== 事件绑定 ==========
 els.searchButton.addEventListener("click", handleSearch);
 els.locationButton.addEventListener("click", () => locateCurrentPosition({ force: true }));
 els.randomButton.addEventListener("click", pickRestaurant);
@@ -649,5 +729,10 @@ els.addressInput.addEventListener("click", () => updateSuggestions());
 els.addressInput.addEventListener("input", () => {
   if (!isApplyingAddress) selectedLocation = null;
   updateSuggestions();
+  // 预加载
+  const address = els.addressInput.value.trim();
+  if (address.length >= 4) {
+    preloadSearch(address, selectedLocation?.address === address ? selectedLocation.center : null);
+  }
 });
 document.addEventListener("click", (event) => { if (!event.target.closest(".search-panel")) hideSuggestions(); });
