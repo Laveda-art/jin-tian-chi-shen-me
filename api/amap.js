@@ -16,7 +16,6 @@ const ACTIONS = {
   around: {
     path: "/place/around",
     params: ["keywords", "location", "radius", "types", "offset", "page", "extensions", "pages"],
-    // pages 是内部参数，表示要搜索多少页，内部串行请求
   },
   ip: {
     path: "/ip",
@@ -34,7 +33,7 @@ function getAmapUrl(action, params) {
   searchParams.set("key", process.env.AMAP_KEY);
 
   config.params.forEach((key) => {
-    if (key === "pages") return; // 内部参数，不传给高德
+    if (key === "pages") return;
     if (params[key] !== undefined && params[key] !== null) {
       searchParams.set(key, params[key]);
     }
@@ -44,7 +43,7 @@ function getAmapUrl(action, params) {
   return url.toString();
 }
 
-export default async function handler(request, response) {
+module.exports = async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
 
@@ -66,7 +65,6 @@ export default async function handler(request, response) {
   }
 
   try {
-    // 如果是 around 请求且带 pages 参数，内部串行请求多页
     if (action === "around" && params.pages) {
       const pages = parseInt(params.pages, 10) || 1;
       const allPois = [];
@@ -80,23 +78,19 @@ export default async function handler(request, response) {
 
         if (data.status === "1" && data.pois) {
           allPois.push(...data.pois);
-          // 如果这页结果不足一页，说明后面没有更多结果了
           if (data.pois.length < (parseInt(params.offset, 10) || 25)) {
             break;
           }
         } else {
-          // 如果某页出错，返回错误
           response.status(200).json(data);
           return;
         }
 
-        // 每页之间延迟 100ms，避免触发 QPS 限制
         if (page < pages) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
-      // 返回合并后的结果
       response.status(200).json({
         status: "1",
         info: "OK",
@@ -107,7 +101,6 @@ export default async function handler(request, response) {
       return;
     }
 
-    // 普通单页请求
     const url = getAmapUrl(action, params);
     const result = await fetch(url);
     const data = await result.json();
@@ -115,4 +108,4 @@ export default async function handler(request, response) {
   } catch (error) {
     response.status(500).json({ status: "0", info: error.message || "Proxy request failed" });
   }
-}
+};
