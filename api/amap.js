@@ -63,16 +63,16 @@ function setCache(key, data) {
   serverCache.set(key, { time: Date.now(), data });
 }
 
-const QPS_ERRORS = ['CUQPS_HAS_EXCEEDED_THE_LIMIT', 'QPS_HAS_EXCEEDED_THE_LIMIT', 'OVER_QUOTA'];
+const RETRY_ERRORS = ['CUQPS_HAS_EXCEEDED_THE_LIMIT', 'QPS_HAS_EXCEEDED_THE_LIMIT', 'OVER_QUOTA', 'SERVICE_NOT_AVAILABLE'];
 
-async function fetchWithRetry(url, maxRetries = 3) {
+async function fetchWithRetry(url, maxRetries = 5) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const result = await fetch(url);
     const data = await result.json();
 
-    if (data.status === '0' && QPS_ERRORS.some(e => (data.info || '').includes(e))) {
+    if (data.status === '0' && RETRY_ERRORS.some(e => (data.info || '').includes(e))) {
       if (attempt < maxRetries) {
-        const delay = 1000 + Math.random() * 2000;
+        const delay = 2000 + Math.random() * 3000; // 2-5秒随机延迟
         await new Promise(r => setTimeout(r, delay));
         continue;
       }

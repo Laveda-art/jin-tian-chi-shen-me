@@ -735,7 +735,14 @@ async function runSearch({ address, center = null }) {
     els.restaurantList.innerHTML = "";
     els.resultCount.textContent = "没有结果";
     els.randomButton.disabled = true;
-    setState("搜索失败", error.message || "稍后再试一次，或者换个地址。", "error");
+    const msg = error.message || "";
+    if (msg.includes("SERVICE_NOT_AVAILABLE") || msg.includes("NOT_AVAILABLE")) {
+      setState("高德服务暂时不可用", "地图服务正在维护中，请稍等 1~2 分钟再试。", "error");
+    } else if (msg.includes("CUQPS") || msg.includes("QPS") || msg.includes("OVER_QUOTA")) {
+      setState("搜索太频繁", "请等待 1~2 分钟后再试。", "error");
+    } else {
+      setState("搜索失败", msg || "稍后再试一次，或者换个地址。", "error");
+    }
   } finally {
     setBusy(false);
   }
