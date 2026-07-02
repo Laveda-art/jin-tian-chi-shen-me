@@ -5,9 +5,8 @@ const MAX_RESULTS_PER_CATEGORY = 200;
 const SEARCH_PAGE_SIZE = 25;
 const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);
 
-// 高德餐饮服务分类码
-const AMAP_RESTAURANT_TYPES = "050000"; // 餐饮服务
-const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900"; // 各类餐饮子分类
+const AMAP_RESTAURANT_TYPES = "050000";
+const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
 
 const DESSERT_BRAND_KEYWORDS = [
   "瑞幸", "瑞幸咖啡", "luckin", "蜜雪", "蜜雪冰城", "星巴克", "starbucks",
@@ -167,7 +166,6 @@ async function reverseGeocode(center) {
   return result?.regeocode?.formatted_address || "当前位置";
 }
 
-// 优化：用 types 分类码搜索，减少 API 请求次数
 async function searchCategory(center, category) {
   const collected = [];
   for (let pageIndex = 1; pageIndex <= SEARCH_PAGES; pageIndex++) {
@@ -552,7 +550,6 @@ async function handleSearch() {
   });
 }
 
-// 优化：并行搜索餐厅和甜点，减少总耗时
 async function runSearch({ address, center = null }) {
   els.pickedPanel.classList.add("hidden");
   hideSuggestions();
@@ -578,24 +575,22 @@ async function runSearch({ address, center = null }) {
     }
 
     const resolvedCenter = center || (await geocodeAddress(address));
-
-    // 优化：并行搜索餐厅和甜点
+    
     const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
     const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
-
+    
     const [restaurants, desserts] = await Promise.all([
       searchCategory(resolvedCenter, restaurantCategory),
       searchCategory(resolvedCenter, dessertCategory),
     ]);
 
-    // 甜点从餐厅结果中补充
     const dessertFallback = getDessertFallback(restaurants);
-
+    
     resultsByCategory = {
       restaurants,
       dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
     };
-
+    
     isShowingDemo = false;
     renderActiveCategory();
     els.searchHint.textContent = `已搜索「${address}」方圆 ${SEARCH_RADIUS} 米内的餐厅和甜品下午茶。`;
