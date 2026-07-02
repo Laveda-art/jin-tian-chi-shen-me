@@ -1,12 +1,10 @@
 const CONFIG = window.EAT_APP_CONFIG || {};
 const AMAP_PROXY_PATH = CONFIG.AMAP_PROXY_PATH || "/api/amap";
 const SEARCH_RADIUS = 500;
-const MAX_RESULTS_PER_CATEGORY = 50;  // 从100减到50
+const MAX_RESULTS_PER_CATEGORY = 50;
 const SEARCH_PAGE_SIZE = 25;
-const SEARCH_PAGES = 2;  // 从4减到2
-const CONCURRENCY_LIMIT = 2;
-const CACHE_TTL = 24 * 60 * 60 * 1000;  // 缓存24小时
-const CACHE_KEY = "eat_search_cache";
+const SEARCH_PAGES = 2;  // 2页
+const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -204,47 +202,20 @@ async function reverseGeocode(center) {
   return result?.regeocode?.formatted_address || "当前位置";
 }
 
-// ========== 并发控制 ==========
-async function runWithConcurrencyLimit(tasks, limit) {
-  const results = [];
-  const executing = [];
-  for (const [index, task] of tasks.entries()) {
-    const promise = task().then((result) => ({ index, result }));
-    results.push(promise);
-    executing.push(promise);
-    if (executing.length >= limit) {
-      await Promise.race(executing);
-      executing.splice(executing.findIndex((p) => p === promise), 1);
-    }
-  }
-  const settled = await Promise.all(results);
-  return settled.sort((a, b) => a.index - b.index).map((item) => item.result);
-}
-
-// ========== 搜索逻辑 ==========
+// ========== 搜索逻辑（新版：只发1个请求，带pages参数） ==========
 async function searchCategory(center, category) {
-  const tasks = [];
-  for (let pageIndex = 1; pageIndex <= SEARCH_PAGES; pageIndex++) {
-    tasks.push(() => searchNearbyPage(center, category.types, pageIndex));
-  }
-
-  const pages = await runWithConcurrencyLimit(tasks, CONCURRENCY_LIMIT);
-  const collected = pages.flat();
-
-  return getSortedLimitedResults(filterByCategory(dedupeRestaurants(collected), category.id));
-}
-
-async function searchNearbyPage(center, types, pageIndex) {
   const result = await requestAmap("around", {
     keywords: "",
     location: stringifyCenter(center),
     radius: SEARCH_RADIUS,
-    types: types,
+    types: category.types,
     offset: SEARCH_PAGE_SIZE,
-    page: pageIndex,
+    pages: SEARCH_PAGES,  // 告诉后端要搜几页
     extensions: "all",
   });
-  return (result?.pois || []).map((poi) => normalizePoi(poi, ""));
+
+  const collected = (result?.pois || []).map((poi) => normalizePoi(poi, ""));
+  return getSortedLimitedResults(filterByCategory(dedupeRestaurants(collected), category.id));
 }
 
 function dedupeRestaurants(list) {
@@ -568,7 +539,7 @@ function preloadSearch(address, center) {
   preloadTimer = setTimeout(async () => {
     if (!address || !getHasAmapProxy()) return;
     const cacheKey = getCacheKey(address);
-    if (localStorage.getItem(cacheKey)) return; // 已有缓存不预加载
+    if (localStorage.getItem(cacheKey)) return;
     try {
       const resolvedCenter = center || (await geocodeAddress(address));
       const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
@@ -585,7 +556,7 @@ function preloadSearch(address, center) {
     } catch {
       // 预加载失败静默处理
     }
-  }, 2000); // 输入停止2秒后预加载
+  }, 2000);
 }
 
 // ========== 定位 ==========
@@ -677,6 +648,7 @@ async function runSearch({ address, center = null }) {
     const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
     const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
 
+    // 并行搜索餐厅和甜点（每个只发1个请求到Vercel）
     const [restaurants, desserts] = await Promise.all([
       searchCategory(resolvedCenter, restaurantCategory),
       searchCategory(resolvedCenter, dessertCategory),
@@ -689,7 +661,6 @@ async function runSearch({ address, center = null }) {
       dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
     };
 
-    // 写入缓存
     setCachedResult(address, resultsByCategory);
 
     isShowingDemo = false;
@@ -729,7 +700,6 @@ els.addressInput.addEventListener("click", () => updateSuggestions());
 els.addressInput.addEventListener("input", () => {
   if (!isApplyingAddress) selectedLocation = null;
   updateSuggestions();
-  // 预加载
   const address = els.addressInput.value.trim();
   if (address.length >= 4) {
     preloadSearch(address, selectedLocation?.address === address ? selectedLocation.center : null);

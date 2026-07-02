@@ -15,7 +15,8 @@ const ACTIONS = {
   },
   around: {
     path: "/place/around",
-    params: ["keywords", "location", "radius", "types", "offset", "page", "extensions"],
+    params: ["keywords", "location", "radius", "types", "offset", "page", "extensions", "pages"],
+    // pages 是内部参数，表示要搜索多少页，内部串行请求
   },
   ip: {
     path: "/ip",
@@ -23,69 +24,95 @@ const ACTIONS = {
   },
 };
 
-function getAmapKey() {
-  return process.env.AMAP_KEY || process.env.AMAP_WEB_SERVICE_KEY || "";
-}
+function getAmapUrl(action, params) {
+  const config = ACTIONS[action];
+  if (!config) throw new Error(`Unknown action: ${action}`);
 
-function sendJson(response, statusCode, payload) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(JSON.stringify(payload));
-}
+  const url = new URL(config.path, AMAP_API_BASE);
+  const searchParams = new URLSearchParams();
 
-function getFirstQueryValue(value) {
-  return Array.isArray(value) ? value[0] : value;
-}
+  searchParams.set("key", process.env.AMAP_KEY);
 
-function buildAmapUrl(actionConfig, query, key) {
-  const url = new URL(`${AMAP_API_BASE}${actionConfig.path}`);
-  url.searchParams.set("key", key);
-  url.searchParams.set("output", "json");
-
-  actionConfig.params.forEach((name) => {
-    const value = getFirstQueryValue(query[name]);
-    if (value !== undefined && value !== null && String(value).trim() !== "") {
-      url.searchParams.set(name, String(value).trim());
+  config.params.forEach((key) => {
+    if (key === "pages") return; // 内部参数，不传给高德
+    if (params[key] !== undefined && params[key] !== null) {
+      searchParams.set(key, params[key]);
     }
   });
 
-  return url;
+  url.search = searchParams.toString();
+  return url.toString();
 }
 
-module.exports = async function handler(request, response) {
-  if (request.method !== "GET") {
-    response.setHeader("Allow", "GET");
-    sendJson(response, 405, { error: "只支持 GET 请求" });
+export default async function handler(request, response) {
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+
+  if (request.method === "OPTIONS") {
+    response.status(200).end();
     return;
   }
 
-  const key = getAmapKey();
-  if (!key) {
-    sendJson(response, 500, { error: "服务端缺少 AMAP_KEY 环境变量" });
+  const { action, ...params } = request.query;
+
+  if (!action || !ACTIONS[action]) {
+    response.status(400).json({ status: "0", info: "Invalid action" });
     return;
   }
 
-  const action = getFirstQueryValue(request.query.action);
-  const actionConfig = ACTIONS[action];
-  if (!actionConfig) {
-    sendJson(response, 400, { error: "未知的高德代理请求" });
+  if (!process.env.AMAP_KEY) {
+    response.status(500).json({ status: "0", info: "AMAP_KEY not configured" });
     return;
   }
 
   try {
-    const amapResponse = await fetch(buildAmapUrl(actionConfig, request.query, key));
-    const payload = await amapResponse.json();
+    // 如果是 around 请求且带 pages 参数，内部串行请求多页
+    if (action === "around" && params.pages) {
+      const pages = parseInt(params.pages, 10) || 1;
+      const allPois = [];
 
-    if (!amapResponse.ok || payload.status === "0") {
-      sendJson(response, 502, {
-        error: payload.info || "高德接口请求失败",
-        infocode: payload.infocode,
+      for (let page = 1; page <= pages; page++) {
+        const pageParams = { ...params, page: String(page) };
+        const url = getAmapUrl(action, pageParams);
+
+        const result = await fetch(url);
+        const data = await result.json();
+
+        if (data.status === "1" && data.pois) {
+          allPois.push(...data.pois);
+          // 如果这页结果不足一页，说明后面没有更多结果了
+          if (data.pois.length < (parseInt(params.offset, 10) || 25)) {
+            break;
+          }
+        } else {
+          // 如果某页出错，返回错误
+          response.status(200).json(data);
+          return;
+        }
+
+        // 每页之间延迟 100ms，避免触发 QPS 限制
+        if (page < pages) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      // 返回合并后的结果
+      response.status(200).json({
+        status: "1",
+        info: "OK",
+        infocode: "10000",
+        count: String(allPois.length),
+        pois: allPois,
       });
       return;
     }
 
-    sendJson(response, 200, payload);
+    // 普通单页请求
+    const url = getAmapUrl(action, params);
+    const result = await fetch(url);
+    const data = await result.json();
+    response.status(200).json(data);
   } catch (error) {
-    sendJson(response, 502, { error: error.message || "高德接口请求失败" });
+    response.status(500).json({ status: "0", info: error.message || "Proxy request failed" });
   }
-};
+}
