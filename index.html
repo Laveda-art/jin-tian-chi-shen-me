@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>今天吃什么</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <h1>今天吃什么</h1>
+        <p class="subtitle">别纠结了，让命运决定⭐️</p>
+      </section>
+
+      <section class="search-panel" aria-label="搜索附近餐厅">
+        <label for="addressInput">想从哪里出发？</label>
+        <div class="search-row">
+          <input
+            id="addressInput"
+            type="search"
+            placeholder="当前位置 / 输入地址"
+            autocomplete="street-address"
+          />
+          <button id="locationButton" class="search-location-button" type="button" aria-label="定位"></button>
+          <button id="searchButton" class="search-text-button" type="button">搜索</button>
+        </div>
+        <div id="locationSuggestions" class="suggestions hidden" role="listbox"></div>
+        <p id="searchHint" class="hint">范围：地址方圆 500 米内的餐厅。</p>
+      </section>
+
+      <nav class="tabs" aria-label="结果分类">
+        <button class="tab-button active" type="button" data-category="restaurants">餐厅</button>
+        <button class="tab-button" type="button" data-category="dessert">甜品下午茶</button>
+      </nav>
+
+      <section id="pickedPanel" class="picked-overlay hidden" aria-live="polite">
+        <div class="picked-panel" role="dialog" aria-modal="true" aria-labelledby="pickedName">
+          <button id="closePickedButton" class="picked-close" type="button" aria-label="关闭">×</button>
+
+          <div id="drawingStage" class="drawing-stage hidden" aria-hidden="true">
+            <div class="fate-card">
+              <span class="fate-card-kicker">命运翻牌中</span>
+              <strong id="drawingName">正在抽取</strong>
+              <span id="drawingCategory">从当前分类里选择</span>
+            </div>
+          </div>
+
+          <div id="pickedContent" class="picked-content">
+            <div id="pickedPhoto" class="picked-photo" aria-hidden="true"></div>
+            <p class="picked-label">命运签</p>
+            <h2 id="pickedName"></h2>
+            <div class="fortune-slip">
+              <span id="fortuneNumber">第 1 签</span>
+              <strong>宜：马上出发</strong>
+            </div>
+            <p id="pickedMeta"></p>
+            <div class="picked-actions">
+              <button id="pickAgainButton" class="ghost-button" type="button">↻ 换一家</button>
+              <a id="navigateLink" class="primary-link" href="#" target="_blank" rel="noreferrer">去这里 →</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="result-header">
+        <div>
+          <p id="resultCount" class="result-count">还没有搜索</p>
+          <h2 id="resultTitle">附近餐厅</h2>
+        </div>
+      </section>
+
+      <section id="statePanel" class="state-panel">
+        <strong>先输入一个地址吧</strong>
+        <span>比如公司、学校、地铁站，或者你现在想出发的位置。</span>
+      </section>
+
+      <ul id="restaurantList" class="restaurant-list" aria-label="餐厅列表"></ul>
+
+      <section class="bottom-random-bar" aria-label="随机推荐">
+        <button id="randomButton" class="random-button" type="button" disabled>
+          <span class="random-hourglass" aria-hidden="true"></span>
+          <span>随机选一家</span>
+        </button>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
