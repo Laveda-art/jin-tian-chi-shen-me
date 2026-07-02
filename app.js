@@ -1,9 +1,9 @@
 const CONFIG = window.EAT_APP_CONFIG || {};
 const AMAP_PROXY_PATH = CONFIG.AMAP_PROXY_PATH || "/api/amap";
 const SEARCH_RADIUS = 500;
-const MAX_RESULTS_PER_CATEGORY = 200;
+const MAX_RESULTS_PER_CATEGORY = 100;  // 从200减到100
 const SEARCH_PAGE_SIZE = 25;
-const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);
+const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);  // 4页
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -166,13 +166,17 @@ async function reverseGeocode(center) {
   return result?.regeocode?.formatted_address || "当前位置";
 }
 
+// 优化：并行翻页搜索，同时减少最大页数
 async function searchCategory(center, category) {
-  const collected = [];
+  // 并行发起所有页的请求
+  const pagePromises = [];
   for (let pageIndex = 1; pageIndex <= SEARCH_PAGES; pageIndex++) {
-    const page = await searchNearbyPage(center, category.types, pageIndex);
-    collected.push(...page);
-    if (page.length < SEARCH_PAGE_SIZE) break;
+    pagePromises.push(searchNearbyPage(center, category.types, pageIndex));
   }
+
+  const pages = await Promise.all(pagePromises);
+  const collected = pages.flat();
+
   return getSortedLimitedResults(filterByCategory(dedupeRestaurants(collected), category.id));
 }
 
@@ -575,22 +579,23 @@ async function runSearch({ address, center = null }) {
     }
 
     const resolvedCenter = center || (await geocodeAddress(address));
-    
+
     const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
     const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
-    
+
+    // 并行搜索餐厅和甜点
     const [restaurants, desserts] = await Promise.all([
       searchCategory(resolvedCenter, restaurantCategory),
       searchCategory(resolvedCenter, dessertCategory),
     ]);
 
     const dessertFallback = getDessertFallback(restaurants);
-    
+
     resultsByCategory = {
       restaurants,
       dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
     };
-    
+
     isShowingDemo = false;
     renderActiveCategory();
     els.searchHint.textContent = `已搜索「${address}」方圆 ${SEARCH_RADIUS} 米内的餐厅和甜品下午茶。`;
