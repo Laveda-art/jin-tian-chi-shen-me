@@ -1,9 +1,10 @@
 const CONFIG = window.EAT_APP_CONFIG || {};
 const AMAP_PROXY_PATH = CONFIG.AMAP_PROXY_PATH || "/api/amap";
 const SEARCH_RADIUS = 500;
-const MAX_RESULTS_PER_CATEGORY = 100;  // 从200减到100
+const MAX_RESULTS_PER_CATEGORY = 100;
 const SEARCH_PAGE_SIZE = 25;
-const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);  // 4页
+const SEARCH_PAGES = Math.ceil(MAX_RESULTS_PER_CATEGORY / SEARCH_PAGE_SIZE);
+const CONCURRENCY_LIMIT = 2;  // 同时最多2个请求，避免QPS限制
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -166,15 +167,31 @@ async function reverseGeocode(center) {
   return result?.regeocode?.formatted_address || "当前位置";
 }
 
-// 优化：并行翻页搜索，同时减少最大页数
+// 带并发限制的并行执行器
+async function runWithConcurrencyLimit(tasks, limit) {
+  const results = [];
+  const executing = [];
+  for (const [index, task] of tasks.entries()) {
+    const promise = task().then((result) => ({ index, result }));
+    results.push(promise);
+    executing.push(promise);
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+      executing.splice(executing.findIndex((p) => p === promise), 1);
+    }
+  }
+  const settled = await Promise.all(results);
+  return settled.sort((a, b) => a.index - b.index).map((item) => item.result);
+}
+
+// 优化：带并发限制的并行翻页
 async function searchCategory(center, category) {
-  // 并行发起所有页的请求
-  const pagePromises = [];
+  const tasks = [];
   for (let pageIndex = 1; pageIndex <= SEARCH_PAGES; pageIndex++) {
-    pagePromises.push(searchNearbyPage(center, category.types, pageIndex));
+    tasks.push(() => searchNearbyPage(center, category.types, pageIndex));
   }
 
-  const pages = await Promise.all(pagePromises);
+  const pages = await runWithConcurrencyLimit(tasks, CONCURRENCY_LIMIT);
   const collected = pages.flat();
 
   return getSortedLimitedResults(filterByCategory(dedupeRestaurants(collected), category.id));
@@ -583,7 +600,7 @@ async function runSearch({ address, center = null }) {
     const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
     const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
 
-    // 并行搜索餐厅和甜点
+    // 并行搜索餐厅和甜点（每个内部有并发限制）
     const [restaurants, desserts] = await Promise.all([
       searchCategory(resolvedCenter, restaurantCategory),
       searchCategory(resolvedCenter, dessertCategory),
