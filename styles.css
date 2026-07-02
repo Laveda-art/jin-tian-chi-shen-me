@@ -51,6 +51,13 @@ input {
   font: inherit;
 }
 
+/* 隐藏 WebKit 默认搜索清除按钮 */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
 button {
   border: 0;
   cursor: pointer;
@@ -129,15 +136,34 @@ h1 {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px 60px;
+  grid-template-columns: minmax(0, 1fr) 32px 38px 60px;
   gap: 0;
   align-items: center;
   border: 3px solid #1f2428;
   border-radius: 999px;
   background: #ffffff;
+  overflow: hidden;
   box-shadow:
     0 2px 0 rgba(31, 36, 40, 0.08),
     0 12px 24px rgba(54, 87, 127, 0.1);
+}
+
+.search-clear-button {
+  display: none;
+  min-height: 48px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #999;
+  font-size: 20px;
+  font-weight: 300;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.search-clear-button.visible {
+  display: grid;
 }
 
 .search-location-button {
@@ -187,7 +213,7 @@ h1 {
   height: 48px;
   border: 0;
   border-radius: 0;
-  padding: 0 12px 0 18px;
+  padding: 0 4px 0 18px;
   background: transparent;
   color: var(--ink);
   outline: none;
@@ -198,9 +224,9 @@ h1 {
 }
 
 .search-row:focus-within {
-  border-color: #1f2428;
+  border-color: var(--accent);
   box-shadow:
-    0 0 0 4px rgba(85, 119, 163, 0.12),
+    0 0 0 3px rgba(85, 119, 163, 0.15),
     0 12px 28px rgba(54, 87, 127, 0.14);
 }
 
@@ -231,10 +257,10 @@ h1 {
 
 .search-text-button {
   position: relative;
-  min-height: 38px !important;
-  margin-right: 5px;
+  min-height: 48px !important;
+  margin-right: 0;
   border-left: 0 !important;
-  border-radius: 0 999px 999px 0 !important;
+  border-radius: 0 !important;
   background: transparent !important;
   color: #1f2428 !important;
   font-size: 14px !important;

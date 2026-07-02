@@ -94,6 +94,7 @@ const els = {
   pickedName: document.querySelector("#pickedName"),
   pickedMeta: document.querySelector("#pickedMeta"),
   navigateLink: document.querySelector("#navigateLink"),
+  clearButton: document.querySelector("#clearButton"),
   tabButtons: document.querySelectorAll(".tab-button"),
 };
 
@@ -109,6 +110,10 @@ let preloadTimer = null;
 
 function getActiveCategory() {
   return CATEGORIES.find((category) => category.id === activeCategoryId) || CATEGORIES[0];
+}
+
+function updateClearButton() {
+  els.clearButton.classList.toggle("visible", els.addressInput.value.length > 0);
 }
 
 function setBusy(isBusy) {
@@ -353,7 +358,10 @@ function renderActiveCategory() {
     navigateLink.target = "_blank";
     navigateLink.rel = "noreferrer";
     navigateLink.textContent = "导航";
-    navigateLink.addEventListener("click", (event) => event.stopPropagation());
+    navigateLink.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleNavigate(event, restaurant);
+    });
 
     footer.appendChild(navigateLink);
     item.append(photo, selectButton, footer);
@@ -463,9 +471,52 @@ function showPickedResult() {
 }
 
 function buildNavigationUrl(restaurant) {
-  if (!restaurant.location) return `https://uri.amap.com/search?keyword=${encodeURIComponent(restaurant.name)}`;
+  if (!restaurant.location) {
+    return `https://uri.amap.com/search?keyword=${encodeURIComponent(restaurant.name)}`;
+  }
   const [longitude, latitude] = restaurant.location.split(",");
-  return `https://uri.amap.com/marker?position=${longitude},${latitude}&name=${encodeURIComponent(restaurant.name)}`;
+  return `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(restaurant.name)}&mode=car&policy=1`;
+}
+
+function handleNavigate(event, restaurant) {
+  if (!restaurant?.location) return;
+
+  const ua = navigator.userAgent.toLowerCase();
+  const isWechat = /micromessenger/.test(ua);
+  const isMobile = /iphone|ipad|ipod|android/.test(ua);
+  const [longitude, latitude] = restaurant.location.split(",");
+  const name = restaurant.name;
+
+  // PC 端：直接打开 Web 版新标签
+  if (!isMobile) {
+    event.preventDefault();
+    window.open(
+      `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(name)}&mode=car&policy=1`,
+      '_blank'
+    );
+    return;
+  }
+
+  // 微信内：无法直接调起外部 APP，使用 Web 版兜底
+  if (isWechat) {
+    event.preventDefault();
+    window.location.href = `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(name)}&mode=car&policy=1`;
+    return;
+  }
+
+  // 其他移动端：先尝试高德 APP Scheme，超时未唤起则降级 Web 版
+  event.preventDefault();
+  const schemeUrl = `amapuri://route/plan/?sid=&did=&dlat=${latitude}&dlon=${longitude}&dname=${encodeURIComponent(name)}&dev=0&t=0`;
+  const webUrl = `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(name)}&mode=car&policy=1`;
+
+  const start = Date.now();
+  window.location.href = schemeUrl;
+
+  setTimeout(() => {
+    if (Date.now() - start < 2600) {
+      window.location.href = webUrl;
+    }
+  }, 2500);
 }
 
 function escapeHtml(value) {
@@ -509,6 +560,7 @@ function selectSuggestion(tip) {
   els.addressInput.value = address;
   isApplyingAddress = false;
   selectedLocation = { address, center };
+  updateClearButton();
   hideSuggestions();
   runSearch({ address, center });
 }
@@ -585,6 +637,7 @@ async function locateCurrentPosition({ force = false } = {}) {
     els.addressInput.value = address;
     isApplyingAddress = false;
     selectedLocation = { address, center };
+    updateClearButton();
     await runSearch({ address, center });
   } catch (error) {
     const message = error.message || "定位失败";
@@ -700,9 +753,22 @@ els.addressInput.addEventListener("click", () => updateSuggestions());
 els.addressInput.addEventListener("input", () => {
   if (!isApplyingAddress) selectedLocation = null;
   updateSuggestions();
+  updateClearButton();
   const address = els.addressInput.value.trim();
   if (address.length >= 4) {
     preloadSearch(address, selectedLocation?.address === address ? selectedLocation.center : null);
   }
 });
+els.clearButton.addEventListener("click", () => {
+  els.addressInput.value = "";
+  els.addressInput.focus();
+  selectedLocation = null;
+  updateClearButton();
+});
+
+els.navigateLink.addEventListener("click", (event) => {
+  const restaurant = selectedByCategory[activeCategoryId];
+  if (restaurant) handleNavigate(event, restaurant);
+});
+
 document.addEventListener("click", (event) => { if (!event.target.closest(".search-panel")) hideSuggestions(); });
