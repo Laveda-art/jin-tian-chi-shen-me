@@ -4,7 +4,7 @@ const SEARCH_RADIUS = 500;
 const MAX_RESULTS_PER_CATEGORY = 50;
 const SEARCH_PAGE_SIZE = 25;
 const SEARCH_PAGES = 2;  // 2页
-const CACHE_TTL = 24 * 60 * 60 * 1000;
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -107,6 +107,8 @@ let selectedLocation = null;
 let isApplyingAddress = false;
 let isPicking = false;
 let preloadTimer = null;
+let lastSearchTime = 0;
+const SEARCH_COOLDOWN = 3000;
 
 function getActiveCategory() {
   return CATEGORIES.find((category) => category.id === activeCategoryId) || CATEGORIES[0];
@@ -487,7 +489,6 @@ function handleNavigate(event, restaurant) {
   const [longitude, latitude] = restaurant.location.split(",");
   const name = restaurant.name;
 
-  // PC 端：直接打开 Web 版新标签
   if (!isMobile) {
     event.preventDefault();
     window.open(
@@ -497,14 +498,12 @@ function handleNavigate(event, restaurant) {
     return;
   }
 
-  // 微信内：无法直接调起外部 APP，使用 Web 版兜底
   if (isWechat) {
     event.preventDefault();
     window.location.href = `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(name)}&mode=car&policy=1`;
     return;
   }
 
-  // 其他移动端：先尝试高德 APP Scheme，超时未唤起则降级 Web 版
   event.preventDefault();
   const schemeUrl = `amapuri://route/plan/?sid=&did=&dlat=${latitude}&dlon=${longitude}&dname=${encodeURIComponent(name)}&dev=0&t=0`;
   const webUrl = `https://uri.amap.com/navigation?to=${longitude},${latitude},${encodeURIComponent(name)}&mode=car&policy=1`;
@@ -655,6 +654,11 @@ async function locateCurrentPosition({ force = false } = {}) {
 
 async function handleSearch() {
   const address = els.addressInput.value.trim();
+  const now = Date.now();
+  if (now - lastSearchTime < SEARCH_COOLDOWN) {
+    setState("搜索太频繁", "请等待3秒后再搜索。", "error");
+    return;
+  }
   await runSearch({
     address,
     center: selectedLocation?.address === address ? selectedLocation.center : null,
@@ -663,6 +667,13 @@ async function handleSearch() {
 
 // ========== 主搜索逻辑 ==========
 async function runSearch({ address, center = null }) {
+  const now = Date.now();
+  if (now - lastSearchTime < SEARCH_COOLDOWN) {
+    els.searchHint.textContent = "搜索太频繁，请稍后再试";
+    return;
+  }
+  lastSearchTime = now;
+
   els.pickedPanel.classList.add("hidden");
   hideSuggestions();
 

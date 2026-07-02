@@ -136,7 +136,7 @@ h1 {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px 38px 60px;
+  grid-template-columns: minmax(0, 1fr) 36px 38px 60px;
   gap: 0;
   align-items: center;
   border: 3px solid #1f2428;
@@ -150,12 +150,12 @@ h1 {
 
 .search-clear-button {
   display: none;
-  width: 32px;
+  width: 36px;
   height: 48px;
   place-items: center;
   border: 0;
   background: transparent;
-  color: #666;
+  color: var(--accent);
   font-size: 22px;
   font-weight: 500;
   cursor: pointer;
@@ -169,6 +169,11 @@ h1 {
 
 .search-clear-button.visible {
   display: grid;
+}
+
+.search-clear-button:active {
+  opacity: 0.6;
+  transform: scale(0.92);
 }
 
 .search-location-button {
@@ -218,7 +223,7 @@ h1 {
   height: 48px;
   border: 0;
   border-radius: 0;
-  padding: 0 4px 0 18px;
+  padding: 0 2px 0 18px;
   background: transparent;
   color: var(--ink);
   outline: none;

@@ -43,6 +43,45 @@ function getAmapUrl(action, params) {
   return url.toString();
 }
 
+// 服务端内存缓存：5分钟
+const serverCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000;
+
+function getCacheKey(action, params) {
+  const sorted = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&');
+  return `${action}?${sorted}`;
+}
+
+function getCached(key) {
+  const item = serverCache.get(key);
+  if (item && Date.now() - item.time < CACHE_DURATION) return item.data;
+  serverCache.delete(key);
+  return null;
+}
+
+function setCache(key, data) {
+  serverCache.set(key, { time: Date.now(), data });
+}
+
+const QPS_ERRORS = ['CUQPS_HAS_EXCEEDED_THE_LIMIT', 'QPS_HAS_EXCEEDED_THE_LIMIT', 'OVER_QUOTA'];
+
+async function fetchWithRetry(url, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const result = await fetch(url);
+    const data = await result.json();
+
+    if (data.status === '0' && QPS_ERRORS.some(e => (data.info || '').includes(e))) {
+      if (attempt < maxRetries) {
+        const delay = 1000 + Math.random() * 2000;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+    }
+    return data;
+  }
+  return { status: '0', info: 'QPS limit exceeded after retries' };
+}
+
 module.exports = async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -71,10 +110,14 @@ module.exports = async function handler(request, response) {
 
       for (let page = 1; page <= pages; page++) {
         const pageParams = { ...params, page: String(page) };
-        const url = getAmapUrl(action, pageParams);
+        const cacheKey = getCacheKey(action, pageParams);
 
-        const result = await fetch(url);
-        const data = await result.json();
+        let data = getCached(cacheKey);
+        if (!data) {
+          const url = getAmapUrl(action, pageParams);
+          data = await fetchWithRetry(url);
+          if (data.status === '1') setCache(cacheKey, data);
+        }
 
         if (data.status === "1" && data.pois) {
           allPois.push(...data.pois);
@@ -87,7 +130,7 @@ module.exports = async function handler(request, response) {
         }
 
         if (page < pages) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
@@ -101,9 +144,13 @@ module.exports = async function handler(request, response) {
       return;
     }
 
-    const url = getAmapUrl(action, params);
-    const result = await fetch(url);
-    const data = await result.json();
+    const cacheKey = getCacheKey(action, params);
+    let data = getCached(cacheKey);
+    if (!data) {
+      const url = getAmapUrl(action, params);
+      data = await fetchWithRetry(url);
+      if (data.status === '1') setCache(cacheKey, data);
+    }
     response.status(200).json(data);
   } catch (error) {
     response.status(500).json({ status: "0", info: error.message || "Proxy request failed" });
