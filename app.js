@@ -110,6 +110,7 @@ let isPicking = false;
 let preloadTimer = null;
 let lastSearchTime = 0;
 const SEARCH_COOLDOWN = 3000;
+const SUGGESTION_DEBOUNCE = 500;
 
 function getActiveCategory() {
   return CATEGORIES.find((category) => category.id === activeCategoryId) || CATEGORIES[0];
@@ -658,33 +659,12 @@ function updateSuggestions() {
     } catch {
       hideSuggestions();
     }
-  }, 260);
+  }, SUGGESTION_DEBOUNCE);
 }
 
-// ========== 预加载 ==========
-function preloadSearch(address, center) {
+// v1 收尾：不做自动预加载，避免输入时产生大量无感地图请求。
+function cancelPreload() {
   clearTimeout(preloadTimer);
-  preloadTimer = setTimeout(async () => {
-    if (!address || !getHasAmapProxy()) return;
-    const cacheKey = getCacheKey(address);
-    if (localStorage.getItem(cacheKey)) return;
-    try {
-      const resolvedCenter = center || (await geocodeAddress(address));
-      const restaurantCategory = CATEGORIES.find((c) => c.id === "restaurants");
-      const dessertCategory = CATEGORIES.find((c) => c.id === "dessert");
-      const [restaurants, desserts] = await Promise.all([
-        searchCategory(resolvedCenter, restaurantCategory),
-        searchCategory(resolvedCenter, dessertCategory),
-      ]);
-      const dessertFallback = getDessertFallback(restaurants);
-      setCachedResult(address, {
-        restaurants,
-        dessert: getSortedLimitedResults(dedupeRestaurants([...desserts, ...dessertFallback])),
-      });
-    } catch {
-      // 预加载失败静默处理
-    }
-  }, 2000);
 }
 
 // ========== 定位 ==========
@@ -814,9 +794,9 @@ async function runSearch({ address, center = null }) {
     els.randomButton.disabled = true;
     const msg = error.message || "";
     if (msg.includes("SERVICE_NOT_AVAILABLE") || msg.includes("NOT_AVAILABLE")) {
-      setState("高德服务暂时不可用", "地图服务正在维护中，请稍等 1~2 分钟再试。", "error");
-    } else if (msg.includes("CUQPS") || msg.includes("QPS") || msg.includes("OVER_QUOTA")) {
-      setState("搜索太频繁", "请等待 1~2 分钟后再试。", "error");
+      setState("地图服务暂时不可用", "可能是高德免费额度、账号授权或计费状态暂时受限。可以明天再试，或换一个可用的 Web 服务 Key。", "error");
+    } else if (msg.includes("CUQPS") || msg.includes("QPS") || msg.includes("OVER_QUOTA") || msg.includes("DAILY_QUERY_OVER_LIMIT")) {
+      setState("地图调用次数太多", "今天的地图服务可能已经接近额度，建议晚点或明天再试。", "error");
     } else {
       setState("搜索失败", msg || "稍后再试一次，或者换个地址。", "error");
     }
@@ -849,10 +829,7 @@ els.addressInput.addEventListener("input", () => {
   if (!isApplyingAddress) selectedLocation = null;
   updateSuggestions();
   updateClearButton();
-  const address = els.addressInput.value.trim();
-  if (address.length >= 4) {
-    preloadSearch(address, selectedLocation?.address === address ? selectedLocation.center : null);
-  }
+  cancelPreload();
 });
 els.clearButton.addEventListener("click", () => {
   els.addressInput.value = "";
