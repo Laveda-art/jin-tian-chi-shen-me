@@ -5,6 +5,7 @@ const MAX_RESULTS_PER_CATEGORY = 50;
 const SEARCH_PAGE_SIZE = 25;
 const SEARCH_PAGES = 2;  // 2页
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+const CACHE_VERSION = "v2";
 
 const AMAP_RESTAURANT_TYPES = "050000";
 const AMAP_DESSERT_TYPES = "050100|050200|050300|050400|050500|050600|050700|050800|050900";
@@ -144,7 +145,7 @@ function getHasAmapProxy() {
 
 // ========== 缓存系统 ==========
 function getCacheKey(address) {
-  return `eat_${address.trim().toLowerCase()}`;
+  return `eat_${CACHE_VERSION}_${address.trim().toLowerCase()}`;
 }
 
 function getCachedResult(address) {
@@ -165,6 +166,7 @@ function getCachedResult(address) {
 
 function setCachedResult(address, results) {
   try {
+    if (!results.restaurants?.length && !results.dessert?.length) return;
     const key = getCacheKey(address);
     localStorage.setItem(key, JSON.stringify({
       timestamp: Date.now(),
@@ -221,8 +223,9 @@ async function searchCategory(center, category) {
     extensions: "all",
   });
 
-  const collected = (result?.pois || []).map((poi) => normalizePoi(poi, ""));
-  return getSortedLimitedResults(filterByCategory(dedupeRestaurants(collected), category.id));
+  const collected = dedupeRestaurants((result?.pois || []).map((poi) => normalizePoi(poi, "")));
+  const filtered = filterByCategory(collected, category.id);
+  return getSortedLimitedResults(filtered.length ? filtered : collected);
 }
 
 function dedupeRestaurants(list) {
@@ -533,28 +536,100 @@ function hideSuggestions() {
   els.locationSuggestions.replaceChildren();
 }
 
-function renderSuggestions(tips) {
+function getTextValue(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join(" ");
+  return String(value || "").trim();
+}
+
+function getSuggestionAddress(suggestion) {
+  return suggestion.displayAddress || [suggestion.district, suggestion.address].filter(Boolean).join(" ");
+}
+
+function hasUsableLocation(location) {
+  if (!location) return false;
+  const normalized = normalizeLocation(location);
+  return normalized.length === 2 && normalized.every((value) => Number.isFinite(value));
+}
+
+function createSuggestion({ name, address, displayAddress, searchAddress, location }) {
+  if (!name || !hasUsableLocation(location)) return null;
+  return {
+    name,
+    address: address || "",
+    displayAddress: displayAddress || address || "",
+    searchAddress: searchAddress || [address, name].filter(Boolean).join(" ") || name,
+    location,
+  };
+}
+
+function normalizeTipSuggestion(tip, location = tip.location) {
+  return createSuggestion({
+    name: getTextValue(tip.name),
+    address: [getTextValue(tip.district), getTextValue(tip.address)].filter(Boolean).join(" "),
+    searchAddress: [getTextValue(tip.district), getTextValue(tip.name)].filter(Boolean).join(" "),
+    location,
+  });
+}
+
+async function geocodeTipLocation(tip) {
+  const address = [getTextValue(tip.district), getTextValue(tip.name), getTextValue(tip.address)]
+    .filter(Boolean)
+    .join(" ");
+  if (!address) return "";
+  const result = await requestAmap("geocode", { address });
+  return result?.geocodes?.[0]?.location || "";
+}
+
+async function buildTipSuggestions(tips) {
+  const directSuggestions = tips.map((tip) => normalizeTipSuggestion(tip));
+  const tipsNeedingLocation = tips
+    .filter((tip) => getTextValue(tip.name) && !hasUsableLocation(tip.location))
+    .slice(0, 4);
+
+  const resolvedSuggestions = await Promise.allSettled(
+    tipsNeedingLocation.map(async (tip) => normalizeTipSuggestion(tip, await geocodeTipLocation(tip))),
+  );
+
+  return mergeSuggestions(
+    directSuggestions,
+    resolvedSuggestions.map((result) => result.status === "fulfilled" ? result.value : null),
+  );
+}
+
+function mergeSuggestions(...groups) {
+  const seen = new Set();
+  return groups.flat().filter((suggestion) => {
+    if (!suggestion) return false;
+    const locationKey = normalizeLocation(suggestion.location).map((value) => value.toFixed(5)).join(",");
+    const key = `${suggestion.name}-${locationKey}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderSuggestions(suggestions) {
   els.locationSuggestions.replaceChildren();
-  const usableTips = tips.filter((tip) => tip.name && tip.location).slice(0, 8);
-  if (!usableTips.length) { hideSuggestions(); return; }
-  usableTips.forEach((tip) => {
+  const usableSuggestions = suggestions.slice(0, 8);
+  if (!usableSuggestions.length) { hideSuggestions(); return; }
+  usableSuggestions.forEach((suggestion) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "suggestion-button";
     button.setAttribute("role", "option");
     button.innerHTML = `
-      <span class="suggestion-name">${escapeHtml(tip.name)}</span>
-      <span class="suggestion-address">${escapeHtml([tip.district, tip.address].filter(Boolean).join(" "))}</span>
+      <span class="suggestion-name">${escapeHtml(suggestion.name)}</span>
+      <span class="suggestion-address">${escapeHtml(getSuggestionAddress(suggestion))}</span>
     `;
-    button.addEventListener("click", () => selectSuggestion(tip));
+    button.addEventListener("click", () => selectSuggestion(suggestion));
     els.locationSuggestions.appendChild(button);
   });
   els.locationSuggestions.classList.remove("hidden");
 }
 
-function selectSuggestion(tip) {
-  const address = [tip.district, tip.name].filter(Boolean).join(" ");
-  const center = normalizeLocation(tip.location);
+function selectSuggestion(suggestion) {
+  const address = suggestion.searchAddress || suggestion.name;
+  const center = normalizeLocation(suggestion.location);
   isApplyingAddress = true;
   els.addressInput.value = address;
   isApplyingAddress = false;
@@ -579,8 +654,10 @@ function updateSuggestions() {
   suggestionTimer = setTimeout(async () => {
     try {
       const result = await requestAmap("tips", { keywords: keyword });
-      renderSuggestions(result?.tips || []);
-    } catch { hideSuggestions(); }
+      renderSuggestions(await buildTipSuggestions(result?.tips || []));
+    } catch {
+      hideSuggestions();
+    }
   }, 260);
 }
 

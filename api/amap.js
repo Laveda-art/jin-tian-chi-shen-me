@@ -23,14 +23,14 @@ const ACTIONS = {
   },
 };
 
-function getAmapUrl(action, params) {
+function getAmapUrl(action, params, amapKey) {
   const config = ACTIONS[action];
   if (!config) throw new Error(`Unknown action: ${action}`);
 
   const url = new URL(config.path, AMAP_API_BASE);
   const searchParams = new URLSearchParams();
 
-  searchParams.set("key", "654c0a3b40510bc3232c6dfa84326669");
+  searchParams.set("key", amapKey);
 
   config.params.forEach((key) => {
     if (key === "pages") return;
@@ -59,7 +59,8 @@ module.exports = async function handler(request, response) {
     return;
   }
 
-  if (!process.env.AMAP_KEY) {
+  const amapKey = process.env.AMAP_KEY;
+  if (!amapKey) {
     response.status(500).json({ status: "0", info: "AMAP_KEY not configured" });
     return;
   }
@@ -71,7 +72,7 @@ module.exports = async function handler(request, response) {
 
       for (let page = 1; page <= pages; page++) {
         const pageParams = { ...params, page: String(page) };
-        const url = getAmapUrl(action, pageParams);
+        const url = getAmapUrl(action, pageParams, amapKey);
 
         const result = await fetch(url);
         const data = await result.json();
@@ -101,7 +102,7 @@ module.exports = async function handler(request, response) {
       return;
     }
 
-    const url = getAmapUrl(action, params);
+    const url = getAmapUrl(action, params, amapKey);
     const result = await fetch(url);
     const data = await result.json();
     response.status(200).json(data);
