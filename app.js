@@ -794,7 +794,7 @@ async function runSearch({ address, center = null }) {
     els.randomButton.disabled = true;
     const msg = error.message || "";
     if (msg.includes("SERVICE_NOT_AVAILABLE") || msg.includes("NOT_AVAILABLE")) {
-      setState("地图服务暂时不可用", "可能是高德免费额度、账号授权或计费状态暂时受限。可以明天再试，或换一个可用的 Web 服务 Key。", "error");
+      setState("当前服务繁忙", "请稍后再试，或者换一个地址重新搜索。", "error");
     } else if (msg.includes("CUQPS") || msg.includes("QPS") || msg.includes("OVER_QUOTA") || msg.includes("DAILY_QUERY_OVER_LIMIT")) {
       setState("地图调用次数太多", "今天的地图服务可能已经接近额度，建议晚点或明天再试。", "error");
     } else {
